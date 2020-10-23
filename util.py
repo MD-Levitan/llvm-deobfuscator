@@ -1,7 +1,7 @@
 from binaryninja import *
 
-
-def safe_asm(bv, asm_str):
+def safe_asm(bv: BinaryView, asm_str: str):
+    print("Try to assemble: {}".format(asm_str))
     return bv.arch.assemble(asm_str)
 
 
@@ -52,3 +52,9 @@ def get_func_containing(bv, addr):
     """ Finds the function, if any, containing the given address """
     funcs = bv.get_functions_containing(addr)
     return funcs[0] if funcs else None
+
+
+def print_debug(value, name):
+    print("[DEBUG] {}".format(name))
+    print(value)
+    print("[DEBUG] ----------")
