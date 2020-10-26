@@ -2,7 +2,7 @@
 	"plugin": {
 		"name": "LLVM Deobfuscator",
 		"type": ["core", "ui"],
-		"api": "python2",
+		"api": "python3",
 		"description": "Deobfuscator for LLVM-Obfuscator",
 		"longdescription": "Emits a cleaned binary from one that has been obfuscated via LLVM-obfuscator's control-flow flattening pass",
 		"license": {
@@ -12,7 +12,7 @@
 		"version": "0.1",
 		"author": "Toshi Piazza & Kareem El-Faramawi",
 		"minimumBinaryNinjaVersion": {
-			"dev": "1.1.dev-1616"
+			"dev": "2.2.2487"
 		}
 	}
 }

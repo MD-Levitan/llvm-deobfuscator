@@ -1,8 +1,8 @@
 from binaryninja import *
 
-def safe_asm(bv: BinaryView, asm_str: str):
+def safe_asm(bv: BinaryView, asm_str: str, arch: Architecture):
     print("Try to assemble: {}".format(asm_str))
-    return bv.arch.assemble(asm_str)
+    return arch.assemble(asm_str)
 
 
 def get_ssa_def(mlil, var):
@@ -57,4 +57,11 @@ def get_func_containing(bv, addr):
 def print_debug(value, name):
     print("[DEBUG] {}".format(name))
     print(value)
+    print("[DEBUG] ----------")
+
+
+def print_block_debug(block, name):
+    print("[DEBUG] {}".format(name))
+    for i in block:
+        print(i)
     print("[DEBUG] ----------")
