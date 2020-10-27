@@ -1,7 +1,8 @@
 from binaryninja import *
 
-def safe_asm(bv: BinaryView, asm_str: str, arch: Architecture):
-    print("Try to assemble: {}".format(asm_str))
+
+def safe_asm(arch: Architecture, asm_str: str):
+    print("[Debug] Try to assemble: {}".format(asm_str))
     return arch.assemble(asm_str)
 
 
@@ -45,13 +46,34 @@ def is_call(bv, addr):
     if llil is None:
         return False
 
-    return llil.operation == LowLevelILOperation.LLIL_CALL
+    return llil.operation == LowLevelILOperation.LLIL_CALL \
+        and llil.dest.operation in (LowLevelILOperation.LLIL_CONST, LowLevelILOperation.LLIL_CONST_PTR)
 
 
 def get_func_containing(bv, addr):
     """ Finds the function, if any, containing the given address """
     funcs = bv.get_functions_containing(addr)
     return funcs[0] if funcs else None
+
+
+ARM_LIST = (Architecture['aarch64'], Architecture['armv7'],
+            Architecture['thumb2'], Architecture['armv7eb'], Architecture['thumb2eb'])
+X86_LIST = (Architecture['ppc'], Architecture['ppc64'], Architecture['ppc_le'],
+            Architecture['x86_16'], Architecture['x86'], Architecture['x86_64'])
+
+
+def jump_instruction(arch: Architecture):
+    if arch in ARM_LIST:
+        return "b"
+    if arch in X86_LIST:
+        return "jmp"
+
+
+def call_instruction(arch: Architecture):
+    if arch in ARM_LIST:
+        return "bl"
+    if arch in X86_LIST:
+        return "call"
 
 
 def print_debug(value, name):
@@ -65,3 +87,8 @@ def print_block_debug(block, name):
     for i in block:
         print(i)
     print("[DEBUG] ----------")
+
+
+def print_backbone(backbone: dict):
+    for key, value in backbone.items():
+        print("{}: {}".format(hex(key), value))

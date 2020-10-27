@@ -6,7 +6,7 @@ from .util import *
 
 
 class CFGLink(object):
-    def __init__(self, arch, block, true_block, false_block=None, def_il=None):
+    def __init__(self, arch, block, true_block: list, false_block=None, def_il=None):
         """ Create a link from a block to its real successors
 
         Args:
@@ -22,12 +22,27 @@ class CFGLink(object):
         self.arch = arch
         self.il = def_il  # The definition il we used to find this link
         self.block = block
+        
+        if false_block is None:
+            false_block = None if len(true_block) < 2 else true_block[1]
+            true_block = true_block[0]
+        else:
+            false_block = false_block[0]
+            true_block = true_block[0]
+
+        print("CFG DEBUG")
+        print_debug(true_block, "TRUE BLOCK")
+        print_debug(false_block, "FALSE BLOCK")
+        print(true_block.outgoing_edges)
 
         # Resolve the true/false blocks
         self.true_block = true_block.outgoing_edges[0].target
         self.false_block = false_block
         if self.false_block is not None:
             self.false_block = self.false_block.outgoing_edges[0].target
+
+        print("[+] Add new CFG: block - {}, true - {}, false - {}".format(self.block,
+                                                                          self.true_block, self.false_block))
 
     @property
     def is_uncond(self):
@@ -60,15 +75,19 @@ class CFGLink(object):
         # at the end of a newly recovered block
         def rel(addr):
             return hex(addr - base_addr).rstrip('L')
-            
+
         # Unconditional jmp
         # TODO: add jump for differernt arch
         if self.is_uncond:
             next_addr = self.true_block.start
             print(
                 '[+] Patching from {:x} to {:x}'.format(base_addr, next_addr))
-            return safe_asm(bv, 'jmp {}'.format(rel(next_addr)), self.arch)
-            
+            if next_addr > base_addr:
+                # relative
+                return safe_asm(self.arch, '{} {}'.format(jump_instruction(self.arch), rel(next_addr)))
+            else:
+                return safe_asm(self.arch, '{} {}'.format(jump_instruction(self.arch), (next_addr)))
+
         # Branch based on original cmovcc
         else:
             assert self.il is not None
@@ -82,6 +101,7 @@ class CFGLink(object):
             # Both parent blocks are part of the same cmov
             il_bb = next(bb for bb in self.il.function if bb.start <=
                          self.il.instr_index < bb.end)
+
             cmov_addr = il_bb.incoming_edges[0].source[-1].address
             cmov = bv.get_disassembly(cmov_addr).split(' ')[0]
 
@@ -89,9 +109,11 @@ class CFGLink(object):
             jmp_instr = cmov.replace('cmov', 'j')
 
             # Generate the branch instructions
-            asm = safe_asm(bv, '{} {}'.format(jmp_instr, rel(true_addr)), self.arch)
+            asm = safe_asm(self.arch, '{} {}'.format(
+                jmp_instr, rel(true_addr)))
             base_addr += len(asm)
-            asm += safe_asm(bv, 'jmp {}'.format(rel(false_addr)), self.arch)
+            asm += safe_asm(self.arch,
+                            '{} {}'.format(jump_instruction(self.arch), rel(false_addr)))
 
             return asm
 
@@ -140,18 +162,11 @@ def compute_backbone_map(bv: BinaryView, mlil: MediumLevelILFunction, state_var:
     var = state_var
     uses = mlil.get_var_uses(var)
 
-    print_debug(uses, "USES")
-
     # The variable with >2 uses is probable the one in the backbone blocks
     while len(uses) <= 2:
         var = mlil[uses[-1]].dest
         uses = mlil.get_var_uses(var)
-
-        print_debug(uses, "LOCAL USES")
-
     uses += mlil.get_var_definitions(var)
-
-    print_debug(uses, "USES2")
 
     # Gather the blocks where this variable is used
     blks = (b for il in uses for b in mlil.basic_blocks if b.start <=
@@ -162,7 +177,6 @@ def compute_backbone_map(bv: BinaryView, mlil: MediumLevelILFunction, state_var:
     # In each of these blocks, find the value of the state
     for bb in blks:
 
-        # Find the comparison
         # print()
         # print()
         # print_block_debug(bb, "Full Block")
@@ -222,7 +236,10 @@ def compute_backbone_map(bv: BinaryView, mlil: MediumLevelILFunction, state_var:
 
         print(
             "[+] Add new backbone: addr - {}, state - {}/{}".format(address, state, hex(state)))
-        backbone[state] = address
+        if backbone.get(state, None) is None:
+            backbone[state] = [address]
+        elif address not in backbone[state]:
+            backbone[state].append(address)
 
     return backbone
 
@@ -237,9 +254,21 @@ def compute_original_blocks(bv: BinaryView, mlil: MediumLevelILFunction, state_v
     Returns:
         tuple: All MediumLevelILInstructions in mlil that update state_var
     """
+
     original = mlil.get_var_definitions(state_var)
+
+    # Example:
+    #   39 @ 0000e2c8  r0_4 = r8_1
+    #   40 @ 0000e2cc  if (r0_4 s> r3) then 41 @ 0xe350 else 42 @ 0xe2d0
+    # All conditions check r0_4 but sets r8_1 value. That's way during
+    # computation of backbones we should use r0_4 - `state_var`, and
+    # during computation of original block r8_4 - `super_state_var`.
+    # TODO: add proccessing more situations
+    while len(original) <= 2:
+        state_var = mlil[original[-1]].src.src
+        original = mlil.get_var_definitions(state_var)
+
     return original
-    # return itemgetter(*original)(mlil)
 
 
 def resolve_cfg_link(bv: BinaryView, mlil: MediumLevelILFunction, il: MediumLevelILInstruction, backbone: dict):
@@ -265,6 +294,9 @@ def resolve_cfg_link(bv: BinaryView, mlil: MediumLevelILFunction, il: MediumLeve
     # il refers to a definition of the state_var
     bb = bv.get_basic_blocks_at(il.address)[0]
 
+    print(il)
+    print(il.src.operation)
+
     # Unconditional jumps will set the state to a constant
     if il.src.operation == MediumLevelILOperation.MLIL_CONST or il.src.operation == MediumLevelILOperation.MLIL_CONST_PTR:
         block = backbone.get(il.src.constant, None)
@@ -273,13 +305,31 @@ def resolve_cfg_link(bv: BinaryView, mlil: MediumLevelILFunction, il: MediumLeve
                                                       hex(il.src.constant)))
         else:
             return CFGLink(mlil.arch, bb, block, def_il=il)
+    # Dev version
+    elif il.src.operation == MediumLevelILOperation.MLIL_OR:
+        print(il.src.left.operation)
+        print(il.src.right.operation)
+        
+        if il.src.left.operation in (MediumLevelILOperation.MLIL_CONST, MediumLevelILOperation.MLIL_CONST_PTR):
+            block_keys = backbone.keys()
+            for key in block_keys:
+                if key & 0xFFFF0000 == il.src.left.constant:
+                    return CFGLink(mlil.arch, bb, backbone.get(key), def_il=il)
+        if il.src.right.operation in (MediumLevelILOperation.MLIL_CONST, MediumLevelILOperation.MLIL_CONST_PTR):
+            block_keys = backbone.keys()
+            for key in block_keys:
+                if key & 0xFFFF0000 == il.src.right.constant:
+                    return CFGLink(mlil.arch, bb, backbone.get(key), def_il=il)
 
     # Conditional jumps choose between two values
     else:
         # Go into SSA to figure out which state is the false branch
         # Get the phi for the state variable at this point
+
         phi = get_ssa_def(mlil, il.ssa_form.src.src)
-        assert phi.operation == MediumLevelILOperation.MLIL_VAR_PHI
+
+        if phi.operation != MediumLevelILOperation.MLIL_VAR_PHI:
+            return None
 
         # The cmov (select) will only ever replace the default value (false)
         # with another if the condition passes (true)
@@ -288,7 +338,11 @@ def resolve_cfg_link(bv: BinaryView, mlil: MediumLevelILFunction, il: MediumLeve
         # v = sorted(phi.src, key=lambda var: var.version)
         # print(v)
 
-        f_def, t_def = sorted(phi.src, key=lambda var: var.version)
+        v = sorted(phi.src, key=lambda var: var.version)
+        if len(v) != 2:
+            return None
+
+        f_def, t_def = v
 
         # There will always be one possible value here
         false_state = get_ssa_def(mlil, f_def).src.possible_values.value
@@ -312,14 +366,13 @@ def clean_block(bv: BinaryView, mlil: MediumLevelILFunction, link: CFGLink):
 
     # Helper for resolving new addresses for relative calls
     def _fix_call(bv, addr, newaddr, arch):
-        print("Address: {} -- {}".format(hex(addr), hex(newaddr)))
         tgt = llil_at(bv, addr).dest.constant
-        print("Address updated: {} -- {}".format(hex(tgt), hex(newaddr)))
-
-        # reladdr = hex(tgt - newaddr).rstrip('L')
-        reladdr = hex(tgt).rstrip('L')
-        return safe_asm(bv, 'bl {}'.format(reladdr), arch=arch)
-        # return safe_asm(bv, 'call {}'.format(reladdr))
+        # print("Address call updated: {} -- {}".format(hex(tgt), hex(newaddr)))
+        if tgt < newaddr:
+            reladdr = hex(tgt).rstrip('L')
+        else:
+            reladdr = hex(tgt - newaddr).rstrip('L')
+        return safe_asm(arch, '{} {}'.format(call_instruction(arch), reladdr))
 
     # The terminator gets replaced anyway
     block = link.block
@@ -331,32 +384,27 @@ def clean_block(bv: BinaryView, mlil: MediumLevelILFunction, link: CFGLink):
     if link.il is not None:
         gather_defs(link.il.ssa_form, nop_addrs)
 
-    print("[+] Gather addresses")
-    print(" ".join(map(lambda x: hex(x), nop_addrs)))
-
-    # Rebuild the block, skipping the bad instrs
+   # Rebuild the block, skipping the bad instrs
     addr = block.start
     data = b''
     arch = mlil.arch
-    
 
     while addr < block.end:
         # How much data to read
         ilen = bv.get_instruction_length(addr, arch=arch)
-        print("Iter: {} - {} - {}".format(hex(addr), hex(block.end), ilen))
-        print("Assem: {}".format(bv.get_disassembly(addr, arch=arch)))
+
+        # print("Iter: {} - {} - {}".format(hex(addr), hex(block.end), ilen))
+        # print("Assem: {}".format(bv.get_disassembly(addr, arch=arch)))
 
         assert ilen != 0
-
         # Only process this instruction if we haven't blacklisted it
         if addr not in nop_addrs:
             # Calls need to be handled separately to fix relative addressing
-            # TODO: add fix_call
-            # if is_call(bv, addr):
-            #     data += _fix_call(bv, addr, block.start + len(data))
-            # else:
-
-            data += bv.read(addr, ilen)
+            if is_call(bv, addr):
+                data += _fix_call(bv, addr, block.start +
+                                  len(data), arch=mlil.arch)
+            else:
+                data += bv.read(addr, ilen)
 
         # Next instruction
         addr += ilen
@@ -373,8 +421,9 @@ def gather_full_backbone(backbone_map: dict):
         set: All BasicBlocks involved in any form in the backbone
     """
     # Get the immediately known blocks from the map
-    backbone_blocks = list(backbone_map.values())
-    backbone_blocks += [bb.outgoing_edges[1].target for bb in backbone_blocks]
+    backbone_blocks = chain(*list(backbone_map.values()))
+    # TODO: fix
+    # backbone_blocks += [bb.outgoing_edges[1].target for bb in backbone_blocks]
 
     # Some of these blocks might be part of a chain of unconditional jumps back to the top of the backbone
     # Find the rest of the blocks in the chain and add them to be removed
@@ -400,21 +449,12 @@ def deflatten_cfg(bv: BinaryView, addr: int):
     func = get_func_containing(bv, addr)
     mlil = func.mlil
 
-    # TODO: make options to choose default algorithim or with super_value.
-    # Example:
-    #   39 @ 0000e2c8  r0_4 = r8_1
-    #   40 @ 0000e2cc  if (r0_4 s> r3) then 41 @ 0xe350 else 42 @ 0xe2d0
-    # All conditions check r0_4 but sets r8_1 value. That's way during
-    # computation of backbones we should use r0_4 - `state_var`, and
-    # during computation of original block r8_4 - `super_state_var`.
-
     state_var = func.get_low_level_il_at(addr).medium_level_il.dest
-    # super_state_var = func.get_low_level_il_at(addr).medium_level_il.src.src
 
     # compute all usages of the state_var
     backbone = compute_backbone_map(bv, mlil, state_var)
     print('[+] Computed backbone')
-    pprint(backbone)
+    print_backbone(backbone)
 
     # compute all the defs of the state_var in the original basic blocks
     original = compute_original_blocks(bv, mlil, state_var)
@@ -427,6 +467,9 @@ def deflatten_cfg(bv: BinaryView, addr: int):
     print('[+] Computed original CFG')
     pprint(CFG)
 
+    # Add `nop` instruction. In different arch len maybe be also different
+    nop_instr = safe_asm(mlil.arch, 'nop')
+
     # patch in all the changes
     print('[+] Patching all discovered links')
     for link in CFG:
@@ -437,22 +480,17 @@ def deflatten_cfg(bv: BinaryView, addr: int):
         # Add the new instructions and patch, nop the rest of the block
         blockdata += link.gen_asm(bv, cave_addr)
 
-        blockdata = blockdata.ljust(orig_len, safe_asm(bv, 'nop', arch=mlil.arch))
-        
-        # nop_instr = safe_asm(bv, 'nop', arch=mlil.arch)
-        # blockdata = blockdata + nop_instr * \
-        #     ((len(blockdata) - orig_len) // len(nop_instr))
-
-        print("[+]Add block: {}".format(len(blockdata)))
+        blockdata = blockdata + nop_instr * \
+            ((orig_len - len(blockdata)) // len(nop_instr))
 
         bv.write(link.block.start, blockdata)
 
     # Do some final cleanup
     print('[+] NOPing backbone')
-    nop = safe_asm(bv, 'nop', mlil.arch)
     for bb in gather_full_backbone(backbone):
         print('[+] NOPing block: {}'.format(bb))
-        bv.write(bb.start, nop * bb.length)
+        bv.write(bb.start, nop_instr *
+                 ((len(blockdata) - orig_len) // len(nop_instr)))
 
 
 """
