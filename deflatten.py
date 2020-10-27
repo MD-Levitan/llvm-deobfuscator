@@ -30,11 +30,6 @@ class CFGLink(object):
             false_block = false_block[0]
             true_block = true_block[0]
 
-        print("CFG DEBUG")
-        print_debug(true_block, "TRUE BLOCK")
-        print_debug(false_block, "FALSE BLOCK")
-        print(true_block.outgoing_edges)
-
         # Resolve the true/false blocks
         self.true_block = true_block.outgoing_edges[0].target
         self.false_block = false_block
@@ -294,8 +289,8 @@ def resolve_cfg_link(bv: BinaryView, mlil: MediumLevelILFunction, il: MediumLeve
     # il refers to a definition of the state_var
     bb = bv.get_basic_blocks_at(il.address)[0]
 
-    print(il)
-    print(il.src.operation)
+    # print(il)
+    # print(il.src.operation)
 
     # Unconditional jumps will set the state to a constant
     if il.src.operation == MediumLevelILOperation.MLIL_CONST or il.src.operation == MediumLevelILOperation.MLIL_CONST_PTR:
@@ -305,21 +300,19 @@ def resolve_cfg_link(bv: BinaryView, mlil: MediumLevelILFunction, il: MediumLeve
                                                       hex(il.src.constant)))
         else:
             return CFGLink(mlil.arch, bb, block, def_il=il)
-    # Dev version
-    elif il.src.operation == MediumLevelILOperation.MLIL_OR:
-        print(il.src.left.operation)
-        print(il.src.right.operation)
+    # # Dev version
+    # elif il.src.operation == MediumLevelILOperation.MLIL_OR:
         
-        if il.src.left.operation in (MediumLevelILOperation.MLIL_CONST, MediumLevelILOperation.MLIL_CONST_PTR):
-            block_keys = backbone.keys()
-            for key in block_keys:
-                if key & 0xFFFF0000 == il.src.left.constant:
-                    return CFGLink(mlil.arch, bb, backbone.get(key), def_il=il)
-        if il.src.right.operation in (MediumLevelILOperation.MLIL_CONST, MediumLevelILOperation.MLIL_CONST_PTR):
-            block_keys = backbone.keys()
-            for key in block_keys:
-                if key & 0xFFFF0000 == il.src.right.constant:
-                    return CFGLink(mlil.arch, bb, backbone.get(key), def_il=il)
+    #     if il.src.left.operation in (MediumLevelILOperation.MLIL_CONST, MediumLevelILOperation.MLIL_CONST_PTR):
+    #         block_keys = backbone.keys()
+    #         for key in block_keys:
+    #             if key & 0xFFFF0000 == il.src.left.constant:
+    #                 return CFGLink(mlil.arch, bb, backbone.get(key), def_il=il)
+    #     if il.src.right.operation in (MediumLevelILOperation.MLIL_CONST, MediumLevelILOperation.MLIL_CONST_PTR):
+    #         block_keys = backbone.keys()
+    #         for key in block_keys:
+    #             if key & 0xFFFF0000 == il.src.right.constant:
+    #                 return CFGLink(mlil.arch, bb, backbone.get(key), def_il=il)
 
     # Conditional jumps choose between two values
     else:
@@ -378,8 +371,7 @@ def clean_block(bv: BinaryView, mlil: MediumLevelILFunction, link: CFGLink):
     block = link.block
     old_len = block.length
     nop_addrs = {block.disassembly_text[-1].address}
-    print(block.disassembly_text)
-
+    
     # Gather all addresses related to the state variable
     if link.il is not None:
         gather_defs(link.il.ssa_form, nop_addrs)
